@@ -1,0 +1,31 @@
+{
+  "name": "MoneyPrinterTurbo GIF test",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg && curl -LsSf https://astral.sh/uv/install.sh | sh && ~/.local/bin/uv sync --frozen",
+  "postStartCommand": "bash .devcontainer/start-services.sh",
+  "forwardPorts": [8501, 8080],
+  "portsAttributes": {
+    "8501": {
+      "label": "MoneyPrinterTurbo Web UI",
+      "visibility": "private",
+      "onAutoForward": "openBrowser"
+    },
+    "8080": {
+      "label": "MoneyPrinterTurbo API",
+      "visibility": "private"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}
