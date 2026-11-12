@@ -2146,6 +2146,8 @@ def _convert_gif_to_video(gif_path: str) -> str:
             utils.get_ffmpeg_binary(), "-nostdin", "-y", "-v", "error",
             "-ignore_loop", "1", "-i", gif_path, "-an",
             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+            "-fps_mode",
+            "vfr",
             "-c:v", "libx264", "-preset", "medium", "-movflags", "+faststart",
             temp_path,
         ]
@@ -2199,7 +2201,9 @@ def preprocess_video(
             try:
                 material_source_path = _convert_gif_to_video(material_source_path)
             except Exception as exc:
-                logger.warning(f"skip unreadable animated GIF: {material.url}, error: {str(exc)}")
+                logger.warning(
+                    f"skip unreadable animated GIF: {material.url}, error: {str(exc)}"
+                )
                 continue
             ext = "mp4"
         is_image = ext in const.FILE_TYPE_IMAGES
