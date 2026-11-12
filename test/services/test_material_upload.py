@@ -23,6 +23,19 @@ class _TextUpload(io.BytesIO):
         return "not binary"
 
 
+def _animated_gif_bytes() -> bytes:
+    output = io.BytesIO()
+    frames = [
+        Image.new("RGB", (8, 8), color="red"),
+        Image.new("RGB", (8, 8), color="blue"),
+    ]
+    frames[0].save(
+        output, format="GIF", save_all=True, append_images=frames[1:],
+        duration=[100, 150], loop=0,
+    )
+    return output.getvalue()
+
+
 def _image_bytes(image_format: str = "PNG") -> bytes:
     output = io.BytesIO()
     Image.new("RGB", (2, 2), color="red").save(output, format=image_format)
@@ -244,6 +257,28 @@ class TestMaterialUploadService(unittest.TestCase):
             with Image.open(os.path.join(temp_dir, stored_name)) as image:
                 self.assertEqual(image.format, "MPO")
                 self.assertEqual(image.size, (4, 4))
+
+    def test_animated_gif_is_accepted_and_single_frame_gif_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(
+                material_upload, "uploaded_material_dir", return_value=temp_dir
+            ):
+                gif_bytes = _animated_gif_bytes()
+                stored_name = material_upload.save_material_upload(
+                    "scene.GIF", io.BytesIO(gif_bytes)
+                )
+                self.assertTrue(stored_name.endswith(".gif"))
+                self.assertEqual(Path(temp_dir, stored_name).read_bytes(), gif_bytes)
+
+                single_frame = io.BytesIO()
+                Image.new("RGB", (8, 8), color="green").save(single_frame, format="GIF")
+                with self.assertRaisesRegex(
+                    material_upload.MaterialUploadError, "at least two"
+                ):
+                    material_upload.save_material_upload(
+                        "still.gif", io.BytesIO(single_frame.getvalue())
+                    )
+            self.assertEqual(len(os.listdir(temp_dir)), 1)
 
     def test_webm_and_bmp_materials_are_accepted(self):
         with tempfile.TemporaryDirectory() as temp_dir:

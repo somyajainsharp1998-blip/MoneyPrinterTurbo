@@ -22,7 +22,7 @@ MATERIAL_VALIDATION_TIMEOUT_SECONDS = 120
 # derives its list from const.FILE_TYPE_VIDEOS / const.FILE_TYPE_IMAGES) and the
 # render pipeline classifies (video.py reads const.FILE_TYPE_IMAGES). Accepting a
 # narrower set here rejects uploads the rest of the pipeline already supports.
-SUPPORTED_VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".flv", ".mkv", ".webm")
+SUPPORTED_VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".flv", ".mkv", ".webm", ".gif")
 SUPPORTED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp")
 SUPPORTED_MATERIAL_EXTENSIONS = (
     *SUPPORTED_VIDEO_EXTENSIONS,
@@ -170,6 +170,48 @@ def _validate_image(file_path: str, extension: str) -> None:
         ) from exc
 
 
+def _validate_gif(file_path: str) -> None:
+    """Validate every frame of an animated GIF within conservative resource limits."""
+    max_frames = 300
+    max_dimension = 4096
+    max_pixels = 40_000_000
+    max_duration_ms = 120_000
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(file_path) as image:
+                if str(image.format or "").upper() != "GIF":
+                    raise MaterialUploadError("uploaded .gif file must contain GIF data")
+                if image.width > max_dimension or image.height > max_dimension:
+                    raise MaterialUploadError("GIF dimensions must not exceed 4096x4096")
+                if image.width * image.height > max_pixels:
+                    raise MaterialUploadError("GIF frame dimensions are too large")
+                frame_count = int(getattr(image, "n_frames", 1))
+                if frame_count < 2:
+                    raise MaterialUploadError("GIF must contain at least two animation frames")
+                if frame_count > max_frames:
+                    raise MaterialUploadError(f"GIF must contain no more than {max_frames} frames")
+                total_duration_ms = 0
+                for frame_index in range(frame_count):
+                    image.seek(frame_index)
+                    frame = image.convert("RGB")
+                    frame.load()
+                    total_duration_ms += max(20, int(image.info.get("duration", 100) or 100))
+                    if total_duration_ms > max_duration_ms:
+                        raise MaterialUploadError("GIF animation must be 120 seconds or shorter")
+    except MaterialUploadError:
+        raise
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+    ) as exc:
+        raise MaterialUploadError("uploaded file must contain a valid animated GIF") from exc
+
+
 def _validate_video(
     file_path: str, timeout_seconds: int = MATERIAL_VALIDATION_TIMEOUT_SECONDS
 ) -> None:
@@ -294,7 +336,7 @@ def _stage_material_upload(
 
 
 def save_material_upload(filename: str, source: BinaryIO) -> str:
-    """Validate and atomically persist an uploaded local video or image."""
+    """Validate and atomically persist an uploaded local video, GIF, or image."""
     safe_name, material_kind, temp_path, total_bytes = _stage_material_upload(
         filename, source
     )
@@ -303,7 +345,9 @@ def save_material_upload(filename: str, source: BinaryIO) -> str:
     target_path = os.path.join(os.path.dirname(temp_path), stored_name)
 
     try:
-        if material_kind == "video":
+        if extension == ".gif":
+            _validate_gif(temp_path)
+        elif material_kind == "video":
             _validate_video(temp_path)
         else:
             _validate_image(temp_path, extension)
