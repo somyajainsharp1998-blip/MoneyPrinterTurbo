@@ -78,5 +78,24 @@ class TestGifSceneConversion(unittest.TestCase):
             self.assertEqual([item.name for item in Path(temp_dir).iterdir()], ["scene.gif"])
 
 
+    def test_preprocess_video_accepts_gif_as_a_local_scene(self):
+        from app.models.schema import MaterialInfo
+        from app.utils import utils
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            gif_path = Path(temp_dir, "scene.gif")
+            self._make_gif(gif_path)
+            material = MaterialInfo(provider="local", url="scene.gif")
+
+            with patch.object(utils, "storage_dir", return_value=temp_dir):
+                processed = video.preprocess_video([material], clip_duration=2)
+
+            self.assertEqual(len(processed), 1)
+            self.assertTrue(processed[0].url.endswith(".gif-scene.mp4"))
+            with VideoFileClip(processed[0].url) as clip:
+                self.assertEqual(tuple(clip.size), (480, 480))
+                self.assertGreater(clip.duration, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
