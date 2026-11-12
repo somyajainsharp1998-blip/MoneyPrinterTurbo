@@ -2122,6 +2122,49 @@ def render_image_zoom_video(
             delete_files(temp_path)
 
 
+def _convert_gif_to_video(gif_path: str) -> str:
+    """Convert one validated GIF playback into a cached, merge-ready MP4 clip."""
+    source_digest = hashlib.sha256()
+    with open(gif_path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            source_digest.update(chunk)
+    output_path = os.path.join(
+        os.path.dirname(os.path.abspath(gif_path)),
+        f"{source_digest.hexdigest()[:24]}.gif-scene.mp4",
+    )
+    if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+        return output_path
+
+    descriptor, temp_path = tempfile.mkstemp(
+        prefix=".gif-scene-", suffix=".mp4", dir=os.path.dirname(output_path)
+    )
+    os.close(descriptor)
+    try:
+        # ignore_loop=1 makes a scene play once even when GIF metadata requests
+        # infinite looping. FFmpeg retains the source animation's frame timing.
+        command = [
+            utils.get_ffmpeg_binary(), "-nostdin", "-y", "-v", "error",
+            "-ignore_loop", "1", "-i", gif_path, "-an",
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+            "-c:v", "libx264", "-preset", "medium", "-movflags", "+faststart",
+            temp_path,
+        ]
+        completed = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=180, check=False,
+        )
+        if completed.returncode != 0 or not os.path.isfile(temp_path) or os.path.getsize(temp_path) == 0:
+            detail = (completed.stderr or "FFmpeg produced no output").strip()[-1000:]
+            raise RuntimeError(f"GIF conversion failed: {detail}")
+        os.replace(temp_path, output_path)
+        temp_path = ""
+        logger.info(f"animated GIF converted to video: {output_path}")
+        return output_path
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            delete_files(temp_path)
+
+
 def preprocess_video(
     materials: List[MaterialInfo], clip_duration=4, image_motion: ImageMotion = ImageMotion.zoom
 ):
@@ -2152,6 +2195,13 @@ def preprocess_video(
             continue
 
         ext = utils.parse_extension(material_source_path)
+        if ext == "gif":
+            try:
+                material_source_path = _convert_gif_to_video(material_source_path)
+            except Exception as exc:
+                logger.warning(f"skip unreadable animated GIF: {material.url}, error: {str(exc)}")
+                continue
+            ext = "mp4"
         is_image = ext in const.FILE_TYPE_IMAGES
         try:
             # 图片素材直接按图片方式读取，避免先走 VideoFileClip 误判后触发不稳定的回退分支。
